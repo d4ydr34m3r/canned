@@ -7,8 +7,8 @@ import textwrap
 from pathlib import Path
 from dataclasses import dataclass
 
-DEFAULT_CSV = Path("/home/claude/canned_responses.csv")
-CONFIG_FILE = Path("/home/claude/canned_config.json")
+DEFAULT_CSV = Path(__file__).parent / "canned_responses.csv"
+CONFIG_FILE = Path(__file__).parent / "canned_config.json"
 CSV_FIELDS = ["id", "body", "keywords"]
 TOP_N = 10
 FUZZY_THRESHOLD = 35
