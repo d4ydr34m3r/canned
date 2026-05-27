@@ -248,7 +248,10 @@ class TextBuffer:
                     pass
                 if li == self.row and active:
                     seg_start = wi * width
-                    if seg_start <= self.col <= seg_start + width:
+                    seg_end = seg_start + len(wl)
+                    # Use actual segment length so cursor at end of line
+                    # isn't pushed off into the next wrapped segment
+                    if seg_start <= self.col <= seg_end:
                         cur_screen_row = screen_row
                         cur_screen_col = start_col + (self.col - seg_start)
                 screen_row += 1
@@ -329,10 +332,16 @@ class App:
         curses.use_default_colors()
         self.scr.keypad(True)
         self.scr.timeout(50)
+        # Enable mouse scroll wheel events
+        curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
         while True:
             self.draw()
             key = self.scr.getch()
             if key == -1:
+                continue
+            # Handle mouse events globally regardless of mode
+            if key == curses.KEY_MOUSE:
+                self._handle_mouse()
                 continue
             if self.mode == "search":
                 if not self._key_search(key):
@@ -424,7 +433,7 @@ class App:
 
         draw_hline(self.scr, h - 3)
         safe_addstr(self.scr, h - 2, 0,
-            " [↑↓] navigate  [Enter] copy  [Ctrl-P] preview  [Ctrl-N] new  [Ctrl-E] edit  [Ctrl-D] delete  [Ctrl-G] signature  [Ctrl-K] clear  [Ctrl-Q] quit"[:w - 1],
+            " [Enter] copy [^P] preview [^N] new [^E] edit [^D] delete [^G] signature [^K] clear [^Q] quit"[:w - 1],
             curses.A_REVERSE)
         if self.status:
             safe_addstr(self.scr, h - 1, 2, self.status[:w - 3], curses.A_DIM)
@@ -519,6 +528,40 @@ class App:
             safe_addstr(self.scr, h - 1, 2, self.status[:w - 3], curses.A_DIM)
 
     # ---- Key handlers ----
+
+    def _handle_mouse(self):
+        """
+        Handle mouse wheel scroll events. Button 4 = scroll up, button 5 = scroll down.
+        In search/preview mode, moves the cursor up or down.
+        In form/signature mode, moves the active TextBuffer cursor up or down.
+        """
+        try:
+            _, _, _, _, bstate = curses.getmouse()
+        except curses.error:
+            return
+
+        scroll_up   = bstate & curses.BUTTON4_PRESSED
+        # BUTTON5 isn't always defined in older curses builds — fall back to raw value
+        scroll_down = bstate & getattr(curses, "BUTTON5_PRESSED", 0x200000)
+
+        if self.mode == "search":
+            if scroll_up:
+                self.sel = max(0, self.sel - 1)
+            elif scroll_down:
+                self.sel = min(len(self.results) - 1, self.sel + 1)
+        elif self.mode == "preview":
+            pass  # preview doesn't scroll yet
+        elif self.mode in ("add", "edit"):
+            buf = self.body_buf if self.active_buf == "body" else self.kw_buf
+            if scroll_up:
+                buf.move_up()
+            elif scroll_down:
+                buf.move_down()
+        elif self.mode == "signature":
+            if scroll_up:
+                self.sig_buf.move_up()
+            elif scroll_down:
+                self.sig_buf.move_down()
 
     def _clear_search(self):
         self.query = ""
