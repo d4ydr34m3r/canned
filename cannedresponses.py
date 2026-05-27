@@ -394,7 +394,7 @@ class App:
 
         draw_hline(self.scr, h - 3)
         safe_addstr(self.scr, h - 2, 0,
-            " [↑↓] navigate  [enter] copy  [p] preview  [a] add  [e] edit  [d] delete  [q] quit  [s] signature"[:w - 1],
+            " [↑↓] navigate  [enter] copy  [^P] preview  [^N] new  [^E] edit  [^D] delete  [^G] signature  [^Q] quit"[:w - 1],
             curses.A_REVERSE)
         if self.status:
             safe_addstr(self.scr, h - 1, 2, self.status[:w - 3], curses.A_DIM)
@@ -420,7 +420,7 @@ class App:
             if row >= h - 3:
                 break
         draw_hline(self.scr, h - 3)
-        safe_addstr(self.scr, h - 2, 0, " [enter] copy  [p / esc] back  [q] quit"[:w - 1], curses.A_REVERSE)
+        safe_addstr(self.scr, h - 2, 0, " [enter] copy  [^P / esc] back  [^Q] quit"[:w - 1], curses.A_REVERSE)
 
     def _draw_form(self, h, w):
         label = " Add New Response " if self.mode == "add" else " Edit Response "
@@ -511,9 +511,9 @@ class App:
     # ---- Key handlers ----
 
     def _key_search(self, key):
-        if key in (ord('q'), ord('Q')):
+        if key == 17:  # ctrl+q — quit
             return False
-        elif key == 27:
+        elif key == 27:  # esc — clear search
             self.query = ""
             self.status = ""
             self._refresh()
@@ -527,19 +527,18 @@ class App:
             self.sel = min(len(self.results) - 1, self.sel + 1)
         elif key == ord('\n'):
             self._copy_selected()
-            # stay open
-        elif key in (ord('p'), ord('P')):
+        elif key == 16:  # ctrl+p — preview
             if self.results:
                 self.mode = "preview"
                 self.status = ""
-        elif key in (ord('a'), ord('A')):
+        elif key == 14:  # ctrl+n — new
             self.body_buf = TextBuffer(multiline=True)
             self.kw_buf = TextBuffer(multiline=False)
             self.active_buf = "body"
             self.editing_rid = None
             self.status = ""
             self.mode = "add"
-        elif key in (ord('e'), ord('E')):
+        elif key == 5:  # ctrl+e — edit
             if self.results:
                 resp, _ = self.results[self.sel]
                 self.body_buf = TextBuffer(resp.body, multiline=True)
@@ -548,13 +547,13 @@ class App:
                 self.editing_rid = resp.rid
                 self.status = ""
                 self.mode = "edit"
-        elif key in (ord('d'), ord('D')):
+        elif key == 4:  # ctrl+d — delete
             self._delete_selected()
-        elif key in (ord('s'), ord('S')):
+        elif key == 7:  # ctrl+g — signature
             self.sig_buf = TextBuffer(self.config.get("signature", ""), multiline=True)
             self.status = ""
             self.mode = "signature"
-        elif 32 <= key <= 126:
+        elif 32 <= key <= 126:  # any printable char goes to search
             self.query += chr(key)
             self.sel = 0
             self.status = ""
@@ -562,9 +561,9 @@ class App:
         return True
 
     def _key_preview(self, key):
-        if key in (ord('q'), ord('Q')):
+        if key == 17:  # ctrl+q
             return False
-        elif key in (27, ord('p'), ord('P')):
+        elif key in (27, 16):  # esc or ctrl+p — back to search
             self.mode = "search"
             self.status = ""
         elif key == ord('\n'):
