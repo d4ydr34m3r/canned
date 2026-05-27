@@ -113,7 +113,7 @@ def search(query, responses, top_n=TOP_N):
 
 
 # ---------------------------------------------------------------------------
-# Clipboard (Windows clip.exe — works in testing via subprocess)
+# Clipboard
 # ---------------------------------------------------------------------------
 
 def copy_to_clipboard(text):
@@ -122,6 +122,18 @@ def copy_to_clipboard(text):
         return True
     except Exception:
         return False
+
+
+def paste_from_clipboard():
+    """Read clipboard text on Windows via PowerShell Get-Clipboard."""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+            capture_output=True, text=True, timeout=3
+        )
+        return result.stdout.rstrip("\r\n")
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +165,7 @@ def clamp(val, lo, hi):
 
 
 # ---------------------------------------------------------------------------
-# Screens
+# App
 # ---------------------------------------------------------------------------
 
 class App:
@@ -164,19 +176,16 @@ class App:
         self.responses = load_csv(csv_path)
         self.config = load_config(config_path)
 
-        # search state
         self.query = ""
         self.results = []
         self.sel = 0
         self.status = ""
         self.mode = "search"  # search | preview | add | edit | signature
 
-        # add/edit state
         self.form = {"body": "", "keywords": ""}
-        self.form_field = 0   # 0=body, 1=keywords
+        self.form_field = 0
         self.editing_rid = None
 
-        # signature state
         self.sig_buf = ""
 
         self._refresh()
@@ -249,7 +258,6 @@ class App:
             line = f"{num}{snippet}{score_str}"
             if i == self.sel:
                 safe_addstr(self.scr, row, 0, line.ljust(w - 1), curses.A_REVERSE)
-                # show keywords below if present
                 if resp.keywords and row + 1 < list_end:
                     kw = f"       keywords: {resp.keywords}"
                     safe_addstr(self.scr, row + 1, 0, kw[:w - 1], curses.A_DIM)
@@ -299,44 +307,55 @@ class App:
         safe_addstr(self.scr, 0, 0, label.center(w - 1), curses.A_REVERSE)
 
         fields = ["body", "keywords"]
-        labels = {"body": "Body (required)", "keywords": "Keywords — optional, comma-separated"}
+        labels = {
+            "body": "Body (required) — [enter] newline  [ctrl+v] paste  [ctrl+s] save  [esc] cancel",
+            "keywords": "Keywords — optional, comma-separated  [tab] back to body  [ctrl+s] save  [esc] cancel",
+        }
 
         row = 2
         for i, f in enumerate(fields):
             safe_addstr(self.scr, row, 2, labels[f] + ":", curses.A_BOLD)
             row += 1
             val = self.form[f]
-            # word-wrap body for display
-            lines = textwrap.wrap(val, w - 6) if f == "body" else [val[-(w - 6):]]
-            if not lines:
-                lines = [""]
-            for li, l in enumerate(lines):
+            if f == "body":
+                # show actual newlines in body
+                display_lines = []
+                for l in val.split("\n"):
+                    wrapped = textwrap.wrap(l, w - 6) or [""]
+                    display_lines.extend(wrapped)
+            else:
+                display_lines = [val[-(w - 6):]]
+            if not display_lines:
+                display_lines = [""]
+            for l in display_lines:
                 attr = curses.A_REVERSE if i == self.form_field else curses.A_NORMAL
-                disp = l.ljust(w - 5)
-                safe_addstr(self.scr, row, 4, disp[:w - 5], attr)
+                safe_addstr(self.scr, row, 4, l.ljust(w - 5)[:w - 5], attr)
                 row += 1
             row += 1
 
-        draw_hline(self.scr, h - 3)
-        footer = " [tab] next field  [enter] save  [esc] cancel"
-        safe_addstr(self.scr, h - 2, 0, footer[:w - 1], curses.A_REVERSE)
         if self.status:
             safe_addstr(self.scr, h - 1, 2, self.status[:w - 3], curses.A_DIM)
 
     def _draw_signature(self, h, w):
         safe_addstr(self.scr, 0, 0, " Signature ".center(w - 1), curses.A_REVERSE)
-        safe_addstr(self.scr, 2, 2, "Current signature (appended to all copied responses):", curses.A_BOLD)
+        safe_addstr(self.scr, 2, 2, "Signature (appended to all responses) — [enter] newline  [ctrl+v] paste  [ctrl+s] save  [ctrl+k] clear  [esc] cancel:", curses.A_BOLD)
 
         row = 4
-        lines = textwrap.wrap(self.sig_buf, w - 6) or [""]
-        for l in lines:
+        display_lines = []
+        for l in self.sig_buf.split("\n"):
+            wrapped = textwrap.wrap(l, w - 6) or [""]
+            display_lines.extend(wrapped)
+        if not display_lines:
+            display_lines = [""]
+
+        for l in display_lines:
             if row >= h - 3:
                 break
-            safe_addstr(self.scr, row, 4, l.ljust(w - 5), curses.A_REVERSE)
+            safe_addstr(self.scr, row, 4, l.ljust(w - 5)[:w - 5], curses.A_REVERSE)
             row += 1
 
         draw_hline(self.scr, h - 3)
-        footer = " [enter] save  [esc] cancel  [ctrl+k] clear"
+        footer = " [ctrl+s] save  [esc] cancel  [ctrl+k] clear  [enter] newline  [ctrl+v] paste"
         safe_addstr(self.scr, h - 2, 0, footer[:w - 1], curses.A_REVERSE)
         if self.status:
             safe_addstr(self.scr, h - 1, 2, self.status[:w - 3], curses.A_DIM)
@@ -346,7 +365,7 @@ class App:
     def _key_search(self, key):
         if key in (ord('q'), ord('Q')):
             return False
-        elif key == 27:  # esc — clear query
+        elif key == 27:
             self.query = ""
             self.status = ""
             self._refresh()
@@ -407,13 +426,26 @@ class App:
         fields = ["body", "keywords"]
         cf = fields[self.form_field]
 
-        if key == 27:
+        if key == 27:  # esc — cancel
             self.mode = "search"
             self.status = "Cancelled."
-        elif key == ord('\t'):
-            self.form_field = (self.form_field + 1) % len(fields)
-        elif key == ord('\n'):
+        elif key == 19:  # ctrl+s — save
             self._save_form()
+        elif key == 22:  # ctrl+v — paste from clipboard
+            pasted = paste_from_clipboard()
+            if pasted:
+                self.form[cf] += pasted
+                self.status = f"Pasted {len(pasted)} chars."
+            else:
+                self.status = "Nothing in clipboard."
+        elif key == ord('\t'):  # tab — switch field
+            self.form_field = (self.form_field + 1) % len(fields)
+        elif key == ord('\n'):  # enter — newline (body only)
+            if cf == "body":
+                self.form[cf] += "\n"
+            else:
+                # enter on keywords saves
+                self._save_form()
         elif key in (curses.KEY_BACKSPACE, 127, 8):
             self.form[cf] = self.form[cf][:-1]
         elif 32 <= key <= 126:
@@ -421,16 +453,26 @@ class App:
         return True
 
     def _key_signature(self, key):
-        if key == 27:
+        if key == 27:  # esc — cancel
             self.mode = "search"
             self.status = "Cancelled."
-        elif key == ord('\n'):
+        elif key == 19:  # ctrl+s — save
             self.config["signature"] = self.sig_buf
             save_config(self.config_path, self.config)
             self.mode = "search"
             self.status = "Signature saved."
         elif key == 11:  # ctrl+k — clear
             self.sig_buf = ""
+            self.status = "Cleared."
+        elif key == 22:  # ctrl+v — paste from clipboard
+            pasted = paste_from_clipboard()
+            if pasted:
+                self.sig_buf += pasted
+                self.status = f"Pasted {len(pasted)} chars."
+            else:
+                self.status = "Nothing in clipboard."
+        elif key == ord('\n'):  # enter — newline
+            self.sig_buf += "\n"
         elif key in (curses.KEY_BACKSPACE, 127, 8):
             self.sig_buf = self.sig_buf[:-1]
         elif 32 <= key <= 126:
@@ -449,7 +491,7 @@ class App:
         if copy_to_clipboard(full):
             self.status = f"Copied entry #{resp.rid}"
         else:
-            self.status = "Clipboard copy failed (clip.exe not available here)."
+            self.status = "Clipboard copy failed."
 
     def _delete_selected(self):
         if not self.results:
@@ -480,7 +522,7 @@ class App:
         save_csv(self.csv_path, self.responses)
         self._refresh()
         self.mode = "search"
-        self.status = "Saved." if self.mode == "search" else ""
+        self.status = "Saved."
 
 
 # ---------------------------------------------------------------------------
